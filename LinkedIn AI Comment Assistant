@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         LinkedIn AI Comment Assistant (via Google AI)
+// @name         LinkedIn AI Comment Assistant (via Google AI) - v1.2
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.2
 // @description  Adds a button to generate thoughtful, personalized comments on LinkedIn posts using the Google AI API.
 // @author       Kushan Perera
 // @match        https://www.linkedin.com/feed/*
@@ -18,7 +18,15 @@
     // --- Configuration ---
     const GOOGLE_AI_API_KEY_STORAGE = 'googleAiApiKey';
 
-    // Function to get the API key. It will prompt the user if the key is not set.
+    // --- SELECTORS ---
+    const POST_SELECTOR = "div[data-urn*=':activity:']";
+    // *** THIS IS THE LINE WE UPDATED BASED ON YOUR HTML ***
+    const ACTION_BAR_SELECTOR = ".feed-shared-social-action-bar";
+    const COMMENT_BOX_SELECTOR = ".ql-editor p";
+    const AUTHOR_NAME_SELECTOR = ".update-components-actor__name .app-aware-link";
+    const POST_TEXT_SELECTOR = ".update-components-text";
+    // --- END OF SELECTORS ---
+
     async function getApiKey() {
         let apiKey = await GM_getValue(GOOGLE_AI_API_KEY_STORAGE, null);
         if (!apiKey) {
@@ -32,9 +40,8 @@
         return apiKey;
     }
 
-    // Function to call the Google AI API
     function generateComment(apiKey, postContent, authorName, button) {
-        const promptText = `
+         const promptText = `
             You are a professional networking assistant helping me comment on a LinkedIn post.
             My goal is to build my personal brand by being supportive, insightful, and encouraging discussion.
 
@@ -52,37 +59,24 @@
         GM_xmlhttpRequest({
             method: 'POST',
             url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            data: JSON.stringify({
-                "contents": [{
-                    "parts": [{
-                        "text": promptText
-                    }]
-                }]
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ "contents": [{ "parts": [{ "text": promptText }] }] }),
             onload: function(response) {
                 try {
                     const result = JSON.parse(response.responseText);
-                    // The actual text is nested deep in the response
                     const commentText = result.candidates[0].content.parts[0].text.trim();
-
-                    // Find the comment box associated with the button and fill it
-                    const postContainer = button.closest('.feed-shared-update-v2');
-                    const commentBox = postContainer.querySelector('.ql-editor p');
+                    const postContainer = button.closest(POST_SELECTOR);
+                    const commentBox = postContainer.querySelector(COMMENT_BOX_SELECTOR);
                     if(commentBox) {
                         commentBox.textContent = commentText;
                     } else {
                        alert('Could not find the comment box to place the text.');
                     }
-
-                    // Re-enable the button
                     button.textContent = '✨ Generate AI Comment';
                     button.disabled = false;
                 } catch (e) {
-                    console.error('Error parsing AI response:', e);
-                    alert('Could not understand the AI response. See the console for details.');
+                    console.error('Error parsing AI response:', e, response.responseText);
+                    alert('Could not understand the AI response. See the console (F12) for details.');
                     button.textContent = 'Error! Try Again';
                     button.disabled = false;
                 }
@@ -96,59 +90,49 @@
         });
     }
 
-
-    // This function adds our button to each post on the page
     function addAiButtonToPosts() {
-        // This selector targets the main container for each post in the feed
-        const posts = document.querySelectorAll('.feed-shared-update-v2');
-
+        const posts = document.querySelectorAll(POST_SELECTOR);
         posts.forEach(post => {
-            // Check if we've already added a button to this post
-            if (post.querySelector('.ai-comment-button')) {
-                return;
-            }
+            if (post.querySelector('.ai-comment-button')) return;
 
-            // Find the area where the "Comment" button lives
-            const actionBar = post.querySelector('.feed-shared-social-action-bar__buttons');
+            const actionBar = post.querySelector(ACTION_BAR_SELECTOR);
             if (actionBar) {
                 const aiButton = document.createElement('button');
-                aiButton.textContent = '✨ Generate AI Comment';
-                aiButton.className = 'ai-comment-button'; // Add a class for styling and checking
+                aiButton.innerHTML = '✨ AI Comment';
+                aiButton.className = 'ai-comment-button';
+                // Some styling to make it fit in
                 aiButton.style.marginLeft = '10px';
                 aiButton.style.padding = '8px 12px';
-                aiButton.style.border = '1px solid #0a66c2';
-                aiButton.style.borderRadius = '18px';
+                aiButton.style.border = 'none';
+                aiButton.style.borderRadius = '4px';
                 aiButton.style.color = '#0a66c2';
-                aiButton.style.backgroundColor = 'white';
+                aiButton.style.backgroundColor = '#eef3f8';
                 aiButton.style.cursor = 'pointer';
                 aiButton.style.fontWeight = '600';
+                aiButton.style.fontFamily = 'inherit';
+                aiButton.style.fontSize = '14px';
+                aiButton.style.display = 'inline-flex';
+                aiButton.style.alignItems = 'center';
 
                 aiButton.addEventListener('click', async (e) => {
                     e.preventDefault();
                     const apiKey = await getApiKey();
-                    if (!apiKey) {
-                        alert('API Key is not set. Please refresh and try again.');
-                        return;
-                    }
+                    if (!apiKey) return;
 
-                    // Show a loading state
                     aiButton.textContent = '🧠 Thinking...';
                     aiButton.disabled = true;
 
-                    // Find the author's name and the post content
-                    const authorElement = post.querySelector('.update-components-actor__name .app-aware-link');
-                    const postContentElement = post.querySelector('.update-components-text');
-
-                    const authorName = authorElement ? authorElement.innerText.split('\n')[0] : 'the author';
+                    const authorElement = post.querySelector(AUTHOR_NAME_SELECTOR);
+                    const postContentElement = post.querySelector(POST_TEXT_SELECTOR);
+                    const authorName = authorElement ? authorElement.innerText.split('\n')[0].trim() : 'the author';
                     const postContent = postContentElement ? postContentElement.innerText : '';
 
                     if (!postContent) {
                         alert("Couldn't find the text of this post. It might be a video or image-only post.");
-                        aiButton.textContent = '✨ Generate AI Comment';
+                        aiButton.innerHTML = '✨ AI Comment';
                         aiButton.disabled = false;
                         return;
                     }
-
                     generateComment(apiKey, postContent, authorName, aiButton);
                 });
 
@@ -157,9 +141,9 @@
         });
     }
 
-    // Run the script once the page is ready and check for new posts periodically
-    // as you scroll down the feed.
-    getApiKey(); // Check for key on page load
-    setInterval(addAiButtonToPosts, 2000); // Check for new posts every 2 seconds
+    // --- Main Execution ---
+    getApiKey();
+    const observer = new MutationObserver(addAiButtonToPosts);
+    observer.observe(document.body, { childList: true, subtree: true });
 
 })();
