@@ -1,0 +1,165 @@
+// ==UserScript==
+// @name         LinkedIn AI Comment Assistant (via Google AI)
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  Adds a button to generate thoughtful, personalized comments on LinkedIn posts using the Google AI API.
+// @author       Kushan Perera
+// @match        https://www.linkedin.com/feed/*
+// @match        https://www.linkedin.com/posts/*
+// @connect      generativelanguage.googleapis.com
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // --- Configuration ---
+    const GOOGLE_AI_API_KEY_STORAGE = 'googleAiApiKey';
+
+    // Function to get the API key. It will prompt the user if the key is not set.
+    async function getApiKey() {
+        let apiKey = await GM_getValue(GOOGLE_AI_API_KEY_STORAGE, null);
+        if (!apiKey) {
+            apiKey = prompt('Please enter your Google AI Studio API key. You only need to do this once.');
+            if (apiKey) {
+                await GM_setValue(GOOGLE_AI_API_KEY_STORAGE, apiKey);
+                alert('API Key saved! The page will now reload.');
+                window.location.reload();
+            }
+        }
+        return apiKey;
+    }
+
+    // Function to call the Google AI API
+    function generateComment(apiKey, postContent, authorName, button) {
+        const promptText = `
+            You are a professional networking assistant helping me comment on a LinkedIn post.
+            My goal is to build my personal brand by being supportive, insightful, and encouraging discussion.
+
+            Please generate a thoughtful, 2-3 sentence comment for the following LinkedIn post.
+            - Acknowledge the author, "${authorName}", by name in a natural way.
+            - Add a unique insight or relate it to a broader concept.
+            - End with an open-ended question to spark a conversation.
+            - Do NOT use generic phrases like "Great post" or "Thanks for sharing."
+            - Do NOT include hashtags.
+
+            Here is the post content:
+            "${postContent}"
+        `;
+
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            data: JSON.stringify({
+                "contents": [{
+                    "parts": [{
+                        "text": promptText
+                    }]
+                }]
+            }),
+            onload: function(response) {
+                try {
+                    const result = JSON.parse(response.responseText);
+                    // The actual text is nested deep in the response
+                    const commentText = result.candidates[0].content.parts[0].text.trim();
+
+                    // Find the comment box associated with the button and fill it
+                    const postContainer = button.closest('.feed-shared-update-v2');
+                    const commentBox = postContainer.querySelector('.ql-editor p');
+                    if(commentBox) {
+                        commentBox.textContent = commentText;
+                    } else {
+                       alert('Could not find the comment box to place the text.');
+                    }
+
+                    // Re-enable the button
+                    button.textContent = '✨ Generate AI Comment';
+                    button.disabled = false;
+                } catch (e) {
+                    console.error('Error parsing AI response:', e);
+                    alert('Could not understand the AI response. See the console for details.');
+                    button.textContent = 'Error! Try Again';
+                    button.disabled = false;
+                }
+            },
+            onerror: function(response) {
+                console.error('AI API Request Failed:', response);
+                alert('Failed to connect to the Google AI API. Check your API key and network connection.');
+                button.textContent = 'Error! Try Again';
+                button.disabled = false;
+            }
+        });
+    }
+
+
+    // This function adds our button to each post on the page
+    function addAiButtonToPosts() {
+        // This selector targets the main container for each post in the feed
+        const posts = document.querySelectorAll('.feed-shared-update-v2');
+
+        posts.forEach(post => {
+            // Check if we've already added a button to this post
+            if (post.querySelector('.ai-comment-button')) {
+                return;
+            }
+
+            // Find the area where the "Comment" button lives
+            const actionBar = post.querySelector('.feed-shared-social-action-bar__buttons');
+            if (actionBar) {
+                const aiButton = document.createElement('button');
+                aiButton.textContent = '✨ Generate AI Comment';
+                aiButton.className = 'ai-comment-button'; // Add a class for styling and checking
+                aiButton.style.marginLeft = '10px';
+                aiButton.style.padding = '8px 12px';
+                aiButton.style.border = '1px solid #0a66c2';
+                aiButton.style.borderRadius = '18px';
+                aiButton.style.color = '#0a66c2';
+                aiButton.style.backgroundColor = 'white';
+                aiButton.style.cursor = 'pointer';
+                aiButton.style.fontWeight = '600';
+
+                aiButton.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    const apiKey = await getApiKey();
+                    if (!apiKey) {
+                        alert('API Key is not set. Please refresh and try again.');
+                        return;
+                    }
+
+                    // Show a loading state
+                    aiButton.textContent = '🧠 Thinking...';
+                    aiButton.disabled = true;
+
+                    // Find the author's name and the post content
+                    const authorElement = post.querySelector('.update-components-actor__name .app-aware-link');
+                    const postContentElement = post.querySelector('.update-components-text');
+
+                    const authorName = authorElement ? authorElement.innerText.split('\n')[0] : 'the author';
+                    const postContent = postContentElement ? postContentElement.innerText : '';
+
+                    if (!postContent) {
+                        alert("Couldn't find the text of this post. It might be a video or image-only post.");
+                        aiButton.textContent = '✨ Generate AI Comment';
+                        aiButton.disabled = false;
+                        return;
+                    }
+
+                    generateComment(apiKey, postContent, authorName, aiButton);
+                });
+
+                actionBar.appendChild(aiButton);
+            }
+        });
+    }
+
+    // Run the script once the page is ready and check for new posts periodically
+    // as you scroll down the feed.
+    getApiKey(); // Check for key on page load
+    setInterval(addAiButtonToPosts, 2000); // Check for new posts every 2 seconds
+
+})();
